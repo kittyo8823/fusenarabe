@@ -28,13 +28,14 @@ export function newRoom(code, host) {
     v: 1,
     code,
     hostId: host.id,
-    phase: 'lobby', // lobby | play | result
+    phase: 'lobby', // lobby | play | reveal
     round: 0,
     settings: { cards: 1, theme: null },
     players: [{ id: host.id, name: host.name }],
-    hands: {}, // playerId -> [{cid, n, slot|null}]
-    board: [], // slot -> {owner, cid, hint} | null
-    result: null,
+    hands: {}, // playerId -> [{cid, n, placed}]
+    board: [],
+    order: [],
+    revealed: 0,
     seen: {}, // playerId -> 最後に通信があった時刻
   };
 }
@@ -54,14 +55,13 @@ export function removePlayer(room, id) {
   if (id === room.hostId) return;
   room.players = room.players.filter((p) => p.id !== id);
   delete room.hands[id];
-  room.board = room.board.map((b) => (b && b.owner === id ? null : b));
+  room.board = room.board.filter((b) => b.owner !== id);
 }
 
 /** カードを配る。全員の数字はすべて違う */
 export function deal(room, rnd = Math.random) {
   const per = Math.max(1, Math.min(3, room.settings.cards | 0));
   const players = room.players.slice();
-  const total = players.length * per;
   const pool = Array.from({ length: 100 }, (_, i) => i + 1);
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(rnd() * (i + 1));
@@ -72,81 +72,71 @@ export function deal(room, rnd = Math.random) {
   let k = 0;
   for (const p of players) {
     room.hands[p.id] = [];
-    for (let c = 0; c < per; c++) room.hands[p.id].push({ cid: `${room.round}-${p.id}-${c}`, n: pool[k++], slot: null });
+    for (let c = 0; c < per; c++) room.hands[p.id].push({ cid: `${room.round}-${p.id}-${c}`, n: pool[k++], placed: false });
     room.hands[p.id].sort((a, b) => a.n - b.n);
   }
-  room.board = new Array(total).fill(null);
-  room.result = null;
+  room.board = []; // 置いた順 {owner, cid, hint, x, y}
+  room.order = []; // めくる順（左から）の cid
+  room.revealed = 0;
   room.phase = 'play';
 }
 
-/** 裏向きに置く。置いたカードは変更できない */
-export function place(room, pid, cid, slot, hint = '') {
+const clamp01 = (v) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.5);
+
+/** カード置き場の好きな位置（x: 0=左=1寄り, 1=右=100寄り）に裏向きで置く。置いたら動かせない */
+export function place(room, pid, cid, x, y, hint = '') {
   if (room.phase !== 'play') return { ok: false, err: 'phase' };
   const hand = room.hands[pid];
   const card = hand && hand.find((c) => c.cid === cid);
   if (!card) return { ok: false, err: 'card' };
-  if (card.slot != null) return { ok: false, err: 'placed' };
-  if (!Number.isInteger(slot) || slot < 0 || slot >= room.board.length) return { ok: false, err: 'slot' };
-  if (room.board[slot]) return { ok: false, err: 'taken' };
-  card.slot = slot;
-  room.board[slot] = { owner: pid, cid, hint: cleanName(hint, HINT_MAX) };
-  if (allPlaced(room)) reveal(room);
+  if (card.placed) return { ok: false, err: 'placed' };
+  card.placed = true;
+  room.board.push({ owner: pid, cid, hint: cleanName(hint, HINT_MAX), x: clamp01(+x), y: clamp01(+y) });
   return { ok: true };
 }
 
 export function allPlaced(room) {
-  return room.board.length > 0 && room.board.every(Boolean);
+  const cards = Object.values(room.hands).flat();
+  return cards.length > 0 && cards.every((c) => c.placed);
 }
 
-/** 結果発表（全員置き終わったとき、またはホストが打ち切ったとき） */
-export function reveal(room) {
-  const cards = [];
-  for (const [pid, hand] of Object.entries(room.hands)) for (const c of hand) if (c.slot != null) cards.push({ pid, n: c.n, slot: c.slot });
-  cards.sort((a, b) => a.slot - b.slot);
-  const nums = cards.map((c) => c.n);
-  const sorted = nums.slice().sort((a, b) => a - b);
-  // となり合う2枚が「小→大」になっている組の数
-  let goodPairs = 0;
-  const pairs = [];
-  for (let i = 0; i + 1 < nums.length; i++) {
-    const ok = nums[i] < nums[i + 1];
-    pairs.push(ok);
-    if (ok) goodPairs++;
-  }
-  // ぴったり正しい位置にあるカードの数
-  const exact = nums.filter((n, i) => n === sorted[i]).length;
-  const totalPairs = Math.max(1, nums.length - 1);
-  const ratio = nums.length <= 1 ? 1 : goodPairs / totalPairs;
-  const unplaced = Object.values(room.hands).flat().filter((c) => c.slot == null).length;
-  const perfect = nums.length > 0 && exact === nums.length && unplaced === 0;
-  const score = nums.length === 0 ? 0 : Math.round(((goodPairs / totalPairs) * 70 + (exact / nums.length) * 30));
-  const stars = perfect ? 3 : unplaced === 0 && exact === nums.length ? 2 : ratio >= 0.8 ? 2 : ratio >= 0.5 ? 1 : 0;
-  room.result = {
-    slots: cards.map((c) => ({ slot: c.slot, n: c.n, owner: c.pid, hint: room.board[c.slot]?.hint || '' })),
-    pairs,
-    exact,
-    goodPairs,
-    totalPairs: nums.length - 1,
-    score: perfect ? 100 : Math.min(99, score),
-    stars,
-    perfect,
-    unplaced,
-  };
-  room.phase = 'result';
+/** めくり始める。左にあるカードから順番 */
+export function startReveal(room) {
+  if (room.phase !== 'play' || !room.board.length) return false;
+  room.order = room.board
+    .slice()
+    .sort((a, b) => a.x - b.x || a.y - b.y)
+    .map((b) => b.cid);
+  room.revealed = 0;
+  room.phase = 'reveal';
+  return true;
+}
+
+/** ホストがボタンを押すたびに1枚めくる */
+export function flipNext(room) {
+  if (room.phase !== 'reveal' || room.revealed >= room.order.length) return false;
+  room.revealed += 1;
+  return true;
 }
 
 export function backToLobby(room) {
   room.phase = 'lobby';
   room.hands = {};
   room.board = [];
-  room.result = null;
+  room.order = [];
+  room.revealed = 0;
 }
 
-/** 全員に配る公開用の状態（他人の数字は入れない） */
+function numberOf(room, cid) {
+  for (const hand of Object.values(room.hands)) for (const c of hand) if (c.cid === cid) return c.n;
+  return null;
+}
+
+/** 全員に配る公開用の状態（めくられていないカードの数字は入れない） */
 export function publicState(room, now = Date.now()) {
+  const order = room.order || [];
   return {
-    v: 1,
+    v: 2,
     code: room.code,
     hostId: room.hostId,
     phase: room.phase,
@@ -158,16 +148,24 @@ export function publicState(room, now = Date.now()) {
         id: p.id,
         name: p.name,
         total: hand.length,
-        placed: hand.filter((c) => c.slot != null).length,
+        placed: hand.filter((c) => c.placed).length,
         online: p.id === room.hostId || now - (room.seen[p.id] || 0) < 25000,
       };
     }),
-    board: room.board.map((b) => (b ? { owner: b.owner, hint: b.hint } : null)),
-    result: room.result,
+    board: room.board.map((b) => {
+      const i = order.indexOf(b.cid);
+      const o = { cid: b.cid, owner: b.owner, hint: b.hint, x: b.x, y: b.y };
+      if (i >= 0) o.turn = i + 1; // めくる順番
+      if (i >= 0 && i < room.revealed) o.n = numberOf(room, b.cid);
+      return o;
+    }),
+    total: Object.values(room.hands).flat().length,
+    revealed: room.revealed || 0,
+    toReveal: order.length,
   };
 }
 
 /** 本人にだけ送る手札 */
 export function handOf(room, pid) {
-  return { round: room.round, cards: (room.hands[pid] || []).map((c) => ({ cid: c.cid, n: c.n, slot: c.slot })) };
+  return { round: room.round, cards: (room.hands[pid] || []).map((c) => ({ cid: c.cid, n: c.n, placed: c.placed })) };
 }

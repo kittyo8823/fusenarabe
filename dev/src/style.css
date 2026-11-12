@@ -30,7 +30,7 @@ body {
 button { font: inherit; color: inherit; cursor: pointer; }
 #app { max-width: 560px; margin: 0 auto; padding: 0 16px calc(130px + env(safe-area-inset-bottom)); }
 #app.scr-title { padding-bottom: 40px; }
-#app.scr-play { padding-bottom: calc(190px + env(safe-area-inset-bottom)); }
+
 
 /* ---- 共通パーツ ---- */
 .btn {
@@ -278,3 +278,65 @@ textarea.in { resize: none; font-size: 14px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01s !important; animation-delay: 0s !important; }
 }
+
+/* ---- カード置き場 ---- */
+#app.scr-table { height: 100vh; height: 100dvh; display: flex; flex-direction: column; padding-bottom: 0; overflow: hidden; }
+.scr-table .top { flex: none; }
+.scr-table .dock { position: static; flex: none; background: none; padding: 10px 0 calc(12px + env(safe-area-inset-bottom)); }
+.tablewrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.theme-mini { flex: none; background: linear-gradient(160deg, #fff8ea, #ffe9c2); color: var(--ink); border-radius: 14px; padding: 8px 14px; font-weight: 900; font-size: 18px; line-height: 1.3; box-shadow: 0 4px 0 #c9a46a; }
+.theme-mini small { display: block; font-size: 11px; color: #b07b2a; }
+.pstrip { flex: none; display: flex; gap: 6px; overflow-x: auto; margin: 10px -16px 0; padding: 0 16px 2px; scrollbar-width: none; }
+.pstrip::-webkit-scrollbar { display: none; }
+.pchip { flex: none; display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.06); border-radius: 999px; padding: 4px 10px; font-size: 13px; font-weight: 800; white-space: nowrap; }
+.pchip i { width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
+.pchip small { color: var(--dim); font-weight: 800; }
+.pchip.done small { color: var(--good); }
+.pchip.off { opacity: 0.5; }
+.pchip.me { box-shadow: inset 0 0 0 1.5px rgba(255, 207, 74, 0.55); }
+.progress-row { flex: none; display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 800; color: var(--dim); margin: 8px 0 6px; }
+.table {
+  flex: 1; min-height: 240px; position: relative; border-radius: 18px;
+  background: radial-gradient(120% 90% at 50% 40%, #2f6a4f 0%, #1d4a37 70%, #163a2b 100%);
+  box-shadow: inset 0 0 0 3px #6b4a2b, inset 0 0 0 7px #3d2a19, inset 0 10px 30px rgba(0,0,0,0.35), 0 10px 30px rgba(0,0,0,0.35);
+  overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.table > .tcard, .table > .axis, .table > .table-empty { position: absolute; }
+.table.aim { cursor: crosshair; box-shadow: inset 0 0 0 3px var(--accent), inset 0 0 0 7px #3d2a19, inset 0 10px 30px rgba(0,0,0,0.35); }
+.table.over { box-shadow: inset 0 0 0 4px var(--accent), inset 0 0 0 8px #3d2a19, 0 0 30px rgba(255, 207, 74, 0.35); }
+.table::before { content: ''; position: absolute; left: 12px; right: 12px; top: 12px; bottom: 30px; }
+.axis { left: 10px; right: 10px; bottom: 8px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 900; color: rgba(255,255,255,0.85); pointer-events: none; }
+.axis::before { content: ''; position: absolute; left: 30%; right: 30%; top: 50%; height: 4px; border-radius: 2px; background: linear-gradient(90deg, #7cc4ff, #ff7a59); opacity: 0.8; }
+.ax b { display: inline-block; background: rgba(0,0,0,0.45); border-radius: 6px; padding: 0 6px; margin: 0 4px; }
+.ax.lo b { color: #9fd3ff; }
+.ax.hi b { color: #ffb19c; }
+.table-empty { inset: 0 0 30px; display: grid; place-content: center; text-align: center; color: rgba(255,255,255,0.55); font-weight: 800; font-size: 15px; pointer-events: none; }
+.table-empty small { font-size: 12px; }
+.tcard { width: 50px; margin: 8px 0 0; display: flex; flex-direction: column; align-items: center; pointer-events: none; transition: left 0.2s, top 0.2s; }
+.table > .tcard { margin-left: 0; }
+.tcard .face2 {
+  width: 46px; height: 64px; border-radius: 8px; display: grid; place-items: center; position: relative;
+  background: var(--c); background-image: repeating-linear-gradient(45deg, rgba(255,255,255,0.2) 0 5px, transparent 5px 10px);
+  box-shadow: inset 0 0 0 2.5px rgba(255,255,255,0.9), 0 4px 10px rgba(0,0,0,0.45);
+}
+.tcard .num { background: rgba(255,255,255,0.92); color: var(--ink); border-radius: 5px; padding: 0 4px; font-weight: 900; font-size: 15px; }
+.tcard.up .face2 { background: var(--card); box-shadow: inset 0 0 0 3px var(--c), 0 6px 14px rgba(0,0,0,0.5); }
+.tcard .big-n { color: var(--ink); font-size: 24px; font-weight: 900; }
+.tcard.fresh .face2 { animation: flipin 0.55s cubic-bezier(.3,1.4,.5,1); }
+@keyframes flipin { 0% { transform: rotateY(90deg) scale(1.3); } 60% { transform: rotateY(0) scale(1.25); } }
+.tcard.next .face2 { animation: nextp 1s ease-in-out infinite; }
+@keyframes nextp { 50% { transform: translateY(-4px); box-shadow: inset 0 0 0 2.5px #fff, 0 0 0 3px var(--accent), 0 8px 18px rgba(0,0,0,0.5); } }
+.tcard .turn { position: absolute; top: -6px; left: -4px; background: #120f22; color: #fff; font-size: 10px; font-weight: 900; border-radius: 999px; min-width: 18px; height: 18px; display: grid; place-items: center; padding: 0 4px; box-shadow: 0 0 0 1.5px rgba(255,255,255,0.4); }
+.tcard.up .turn { background: var(--good); color: #0f2a1c; }
+.tcard .thint { margin-top: 3px; width: 72px; text-align: center; font-size: 11px; font-weight: 900; line-height: 1.2; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.8); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-all; }
+.tcard .thint .nohint { color: rgba(255,255,255,0.6); font-size: 10px; text-shadow: none; }
+.tcard .towner { font-size: 9px; color: rgba(255,255,255,0.65); font-weight: 700; white-space: nowrap; max-width: 72px; overflow: hidden; text-overflow: ellipsis; }
+.tcard.pending { opacity: 0.6; }
+.tcard.preview .face2 { outline: 3px dashed var(--accent); outline-offset: 3px; animation: nextp 1s ease-in-out infinite; }
+.dragghost { position: fixed; left: 0; top: 0; z-index: 70; width: 60px; height: 80px; border-radius: 10px; pointer-events: none; display: grid; place-items: center; background: var(--card); box-shadow: inset 0 0 0 3px var(--c), 0 16px 30px rgba(0,0,0,0.5); }
+.dragghost span { font-size: 28px; font-weight: 900; color: var(--ink); }
+body.dragging { cursor: grabbing; }
+.hcard { touch-action: none; user-select: none; -webkit-user-select: none; }
+.hcard:not(.placed) { cursor: grab; }
+.flipbtn small { display: block; font-size: 12px; font-weight: 800; opacity: 0.75; }
+.linkbtn.block { display: block; margin: 4px auto 0; }

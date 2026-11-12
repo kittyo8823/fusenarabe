@@ -80,7 +80,6 @@ function confirmSheet(title, body, okLabel, onOk, danger = false) {
     h('div', { class: 'row' }, h('button', { class: 'btn ghost', onclick: closeSheet }, 'やめる'), h('button', { class: `btn ${danger ? 'danger' : 'primary'}`, onclick: () => (closeSheet(), onOk()) }, okLabel)),
   ]);
 }
-const stars = (n) => h('span', { class: 'stars' }, [0, 1, 2].map((i) => h('i', { class: i < n ? 'on' : '' }, '★')));
 
 // ---------- 状態 ----------
 const S = { room: null, st: null, hand: { round: 0, cards: [] }, sel: null, pending: {}, genre: 'すべて', animRound: null, lastStateAt: 0, key: '' };
@@ -198,9 +197,9 @@ function rulesBody() {
     { class: 'rules-list' },
     h('li', null, '1〜100の数字カードが、ひとり1〜3枚ずつ配られます（全員ちがう数字）。'),
     h('li', null, 'お題が出ます。たとえば「無人島に持っていくもの」なら、1＝いらない、100＝絶対ほしい。'),
-    h('li', null, '自分の数字に合う「ことば」をヒントにして、カードを裏向きのまま列に置きます。上ほど小さく、下ほど大きい。'),
-    h('li', null, '置く順番もタイミングも自由。ただし一度置いたら動かせません。'),
-    h('li', null, '全員置いたらオープン！ 正しい順に近いほど高得点。全部ぴったりならパーフェクトです。')
+    h('li', null, '自分の数字に合う「ことば」をヒントにして、カードを裏向きのままカード置き場にスワイプして置きます。左ほど小さく（1）、右ほど大きい（100）。'),
+    h('li', null, '置く場所もタイミングも自由。ただし一度置いたら動かせません。'),
+    h('li', null, '全員置いたら、ホストが「めくる」を押すたびに左から1枚ずつめくれます。うまく並んだかはみんなで判定！')
   );
 }
 
@@ -246,6 +245,7 @@ function enterRoom(room) {
   S.st = null;
   S.sel = null;
   S.pending = {};
+  S.drop = null;
   S.key = '';
   setUrlRoom(room.code);
   if (!room.isHost) save('last', { code: room.code, at: Date.now() });
@@ -266,15 +266,15 @@ function enterRoom(room) {
       S.pending = {};
     }
     S.hand = hd;
-    for (const c of hd.cards) if (c.slot != null) delete S.pending[c.cid];
-    if (S.sel && hd.cards.find((c) => c.cid === S.sel && c.slot != null)) S.sel = null;
+    for (const c of hd.cards) if (c.placed) delete S.pending[c.cid];
+    if (S.sel && hd.cards.find((c) => c.cid === S.sel && c.placed)) S.sel = null;
     render();
   });
   if (!room.isHost) {
     room.onError = (err, cid) => {
       if (cid) delete S.pending[cid];
       S.key = '';
-      toast(err === 'taken' ? 'そこはちょうど埋まりました。別の場所に置いてください' : err === 'phase' ? 'もう結果発表になっています' : '置けませんでした', 'warn');
+      toast(err === 'phase' ? 'もうめくり始めています' : '置けませんでした', 'warn');
       render();
     };
     room.onClosed = () => S.room === room && leaveToTitle('ホストが部屋を解散しました', true);
@@ -314,16 +314,15 @@ setInterval(() => {
 // ---------- 部屋の画面 ----------
 function render() {
   if (!S.room || !S.st) return;
-  const key = JSON.stringify([S.st, S.hand, S.sel, S.pending, S.genre]);
+  const key = JSON.stringify([S.st, S.hand, S.sel, S.pending, S.drop, S.genre]);
   if (key === S.key) return;
   S.key = key;
   const y = window.scrollY;
   app.textContent = '';
-  app.className = `scr-${S.st.phase}`;
+  app.className = `scr-${S.st.phase === 'lobby' ? 'lobby' : 'table'}`;
   app.append(topBar());
   if (S.st.phase === 'lobby') renderLobby();
-  else if (S.st.phase === 'play') renderPlay();
-  else renderResult();
+  else renderTable();
   window.scrollTo(0, y);
 }
 
@@ -509,195 +508,117 @@ function customTheme() {
   t.focus();
 }
 
-// ---------- ゲーム中 ----------
-function renderPlay() {
+// ---------- カード置き場（ゲーム中・めくり） ----------
+const CW = 50; // カードの幅
+const CH = 96; // カード＋ヒントの高さ
+S.flipSeen = new Set();
+
+function renderTable() {
   const st = S.st;
   const theme = st.settings.theme;
+  const playing = st.phase === 'play';
   const myCards = S.hand.round === st.round ? S.hand.cards : [];
-  const unplaced = myCards.filter((c) => c.slot == null && S.pending[c.cid] == null);
+  const unplaced = myCards.filter((c) => !c.placed && S.pending[c.cid] == null);
   if (S.sel && !unplaced.find((c) => c.cid === S.sel)) S.sel = null;
-  if (!S.sel && unplaced.length === 1) S.sel = unplaced[0].cid;
-  const pendingSlots = new Map(Object.entries(S.pending).map(([cid, slot]) => [slot, cid]));
-  const mineBySlot = new Map(myCards.filter((c) => c.slot != null).map((c) => [c.slot, c]));
+  if (!playing) {
+    S.sel = null;
+    S.drop = null;
+  }
+  const myNum = new Map(myCards.map((c) => [c.cid, c.n]));
+  const nextTurn = st.revealed + 1;
+  const done = st.phase === 'reveal' && st.revealed >= st.toReveal;
 
-  const placedTotal = st.board.filter(Boolean).length;
-  const rows = st.board.map((b, i) => {
-    const idx = h('span', { class: 'idx' }, i + 1);
-    if (b) {
-      const mine = mineBySlot.get(i);
-      return h(
-        'li',
-        { class: `slot filled ${mine ? 'mine' : ''}` },
-        idx,
-        h('div', { class: 'face back', style: `--c:${colorOf(b.owner)}` }, mine ? h('span', { class: 'num' }, mine.n) : null),
-        h('div', { class: 'who' }, h('div', { class: 'hint' }, b.hint ? `「${b.hint}」` : h('span', { class: 'nohint' }, 'ヒントなし')), h('div', { class: 'owner' }, nameOf(b.owner), mine ? '（あなた）' : ''))
-      );
-    }
-    if (pendingSlots.has(i)) {
-      const c = myCards.find((x) => x.cid === pendingSlots.get(i));
-      return h('li', { class: 'slot pending' }, idx, h('div', { class: 'face back', style: `--c:${colorOf(me().id)}` }, h('span', { class: 'num' }, c ? c.n : '')), h('div', { class: 'who' }, h('div', { class: 'owner' }, '置いています…')));
-    }
-    const canPlace = !!S.sel;
-    return h(
-      'li',
-      { class: `slot empty ${canPlace ? 'target' : ''}`, onclick: canPlace ? () => placeSheet(i) : null },
-      idx,
-      h('div', { class: 'face hole' }),
-      h('div', { class: 'who' }, canPlace ? h('span', { class: 'put' }, 'ここに置く') : h('span', { class: 'free' }, 'あいてる'))
+  // カード置き場
+  const table = h('div', { class: `table ${S.sel && playing ? 'aim' : ''}`, id: 'table' });
+  table.append(h('div', { class: 'axis' }, h('span', { class: 'ax lo' }, h('b', null, '1'), theme ? theme.lo : '小さい'), h('span', { class: 'ax hi' }, theme ? theme.hi : '大きい', h('b', null, '100'))));
+  if (!st.board.length && playing) table.append(h('div', { class: 'table-empty' }, '手札のカードをここにスワイプ', h('br'), h('small', null, '左ほど 1、右ほど 100')));
+  st.board.forEach((b, i) => {
+    const mine = b.owner === me().id;
+    const flipped = b.n != null;
+    const fresh = flipped && !S.flipSeen.has(b.cid);
+    if (flipped) S.flipSeen.add(b.cid);
+    const card = h(
+      'div',
+      { class: `tcard ${mine ? 'mine' : ''} ${flipped ? 'up' : ''} ${fresh ? 'fresh' : ''} ${!playing && !flipped && b.turn === nextTurn ? 'next' : ''}`, style: `${pos(b.x, b.y)};--c:${colorOf(b.owner)};z-index:${flipped ? 200 + i : 10 + i}` },
+      h('div', { class: 'face2' }, flipped ? h('span', { class: 'big-n' }, b.n) : mine ? h('span', { class: 'num' }, myNum.get(b.cid) ?? '') : null),
+      !playing && b.turn ? h('span', { class: 'turn' }, b.turn) : null,
+      h('div', { class: 'thint' }, b.hint || h('span', { class: 'nohint' }, nameOf(b.owner))),
+      b.hint ? h('div', { class: 'towner' }, nameOf(b.owner)) : null
     );
+    table.append(card);
   });
+  for (const [cid, p] of Object.entries(S.pending)) {
+    table.append(h('div', { class: 'tcard mine pending', style: `${pos(p.x, p.y)};--c:${colorOf(me().id)}` }, h('div', { class: 'face2' }, h('span', { class: 'num' }, myNum.get(cid) ?? '')), h('div', { class: 'thint' }, '置いています…')));
+  }
+  if (S.drop) table.append(h('div', { class: 'tcard mine preview', style: `${pos(S.drop.x, S.drop.y)};--c:${colorOf(me().id)}` }, h('div', { class: 'face2' }, h('span', { class: 'num' }, myNum.get(S.drop.cid) ?? ''))));
+  if (playing) {
+    table.addEventListener('click', (e) => {
+      if (!S.sel || e.target.closest('.tcard')) return;
+      const p = tablePoint(e.clientX, e.clientY);
+      if (p) askPlace(S.sel, p.x, p.y);
+    });
+  }
+
+  const placedAll = st.players.reduce((a, p) => a + p.placed, 0);
+  const status = h(
+    'div',
+    { class: 'pstrip' },
+    st.players.map((p, i) => {
+      const fin = p.total > 0 && p.placed === p.total;
+      return h('span', { class: `pchip ${p.online ? '' : 'off'} ${fin ? 'done' : ''} ${p.id === me().id ? 'me' : ''}` }, h('i', { style: `--c:${COLORS[i % COLORS.length]}` }), p.name, h('small', null, p.total === 0 ? '観戦' : fin ? '✓' : `${p.placed}/${p.total}`));
+    })
+  );
 
   app.append(
     h(
       'main',
-      { class: 'play' },
-      themeCard(theme),
-      h('section', { class: 'status' }, h('div', { class: 'status-head' }, `置いたカード ${placedTotal}/${st.board.length}`, h('span', { class: 'progress' }, h('i', { style: `width:${(placedTotal / Math.max(1, st.board.length)) * 100}%` }))), playerList('play')),
-      h(
-        'section',
-        { class: 'board' },
-        h('div', { class: 'end top-end' }, h('b', null, '小'), theme ? theme.lo : '小さい', h('span', null, '1に近い')),
-        h('ol', { class: 'slots' }, rows),
-        h('div', { class: 'end bottom-end' }, h('b', null, '大'), theme ? theme.hi : '大きい', h('span', null, '100に近い'))
-      ),
-      isHost()
-        ? h(
-            'button',
-            {
-              class: 'linkbtn reveal-now',
-              onclick: () => confirmSheet('まだ置いていない人がいます', '待たずに結果を見ますか？ 置かれていないカードは採点に入りません。', '結果を見る', () => S.room.revealNow()),
-            },
-            '待たずに結果を見る（ホスト）'
-          )
-        : null
+      { class: 'tablewrap' },
+      h('div', { class: 'theme-mini' }, h('small', null, 'お題'), theme ? theme.title : ''),
+      status,
+      h('div', { class: 'progress-row' }, playing ? `置いたカード ${placedAll}/${st.total}` : done ? 'ぜんぶめくれた！ うまく並んだ？' : `めくったカード ${st.revealed}/${st.toReveal}`, h('span', { class: 'progress' }, h('i', { style: `width:${playing ? (placedAll / Math.max(1, st.total)) * 100 : (st.revealed / Math.max(1, st.toReveal)) * 100}%` }))),
+      table
     )
   );
 
-  // 手札
-  let dock;
-  if (!myCards.length) dock = h('div', { class: 'waiting' }, '途中参加なので、次のラウンドから遊べます');
-  else {
-    const left = unplaced.length;
-    dock = [
-      h('div', { class: 'dock-head' }, left ? (S.sel ? '列の「ここに置く」をタップ' : '置くカードを選んでね') : 'ぜんぶ置きました！ みんなを待っています'),
+  // 下の操作バー
+  const dock = h('div', { class: 'dock' });
+  const left = unplaced.length;
+  if (playing && left) {
+    dock.append(
+      h('div', { class: 'dock-head' }, S.sel ? 'カード置き場をタップしても置けます' : 'カードを上にスワイプして置こう'),
       h(
         'div',
         { class: 'hand' },
         myCards.map((c) => {
-          const placed = c.slot != null || S.pending[c.cid] != null;
-          const slot = c.slot != null ? c.slot : S.pending[c.cid];
-          return h(
-            'button',
-            {
-              class: `hcard ${placed ? 'placed' : ''} ${S.sel === c.cid ? 'sel' : ''}`,
-              style: `--c:${colorOf(me().id)}`,
-              disabled: placed,
-              onclick: () => {
-                S.sel = S.sel === c.cid ? null : c.cid;
-                render();
-              },
-            },
-            h('span', { class: 'n' }, c.n),
-            h('span', { class: 'sub' }, placed ? `${slot + 1}番目` : S.sel === c.cid ? '選択中' : 'タップ')
-          );
+          const placed = c.placed || S.pending[c.cid] != null || (S.drop && S.drop.cid === c.cid);
+          const el = h('button', { class: `hcard ${placed ? 'placed' : ''} ${S.sel === c.cid ? 'sel' : ''}`, style: `--c:${colorOf(me().id)}`, disabled: placed }, h('span', { class: 'n' }, c.n), h('span', { class: 'sub' }, placed ? '置いた' : S.sel === c.cid ? '選択中' : 'スワイプ'));
+          if (!placed) dragSource(el, c);
+          return el;
         })
-      ),
-    ];
-  }
-  app.append(h('div', { class: 'dock' }, dock));
-}
-
-function placeSheet(slot) {
-  const card = S.hand.cards.find((c) => c.cid === S.sel);
-  if (!card) return;
-  const theme = S.st.settings.theme;
-  const hint = h('input', { class: 'in', maxlength: HINT_MAX, placeholder: theme ? `「${theme.title}」なら？` : 'ひとこと', enterkeyhint: 'done' });
-  const go = () => {
-    if (S.st.phase !== 'play') return closeSheet();
-    if (S.st.board[slot]) {
-      closeSheet();
-      toast('そこはもう埋まっています', 'warn');
-      return;
-    }
-    const res = S.room.place(card.cid, slot, hint.value);
-    closeSheet();
-    if (res && res.pending) {
-      S.pending[card.cid] = slot;
-      setTimeout(() => {
-        if (S.pending[card.cid] === slot) {
-          delete S.pending[card.cid];
-          S.key = '';
-          render();
-        }
-      }, 8000);
-    } else if (res && !res.ok) toast('置けませんでした', 'warn');
-    S.sel = null;
-    render();
-  };
-  hint.addEventListener('keydown', (e) => e.key === 'Enter' && go());
-  const n = S.st.board.length;
-  openSheet([
-    h('div', { class: 'place-head' }, h('div', { class: 'face back big', style: `--c:${colorOf(me().id)}` }, h('span', { class: 'num' }, card.n)), h('div', null, h('div', { class: 'sheet-title' }, `${slot + 1}番目に置く`), h('div', { class: 'note' }, `全${n}枠のうち 上から${slot + 1}番目`))),
-    h('label', { class: 'lbl' }, 'ヒント（みんなに見えます・なくてもOK）'),
-    hint,
-    h('p', { class: 'note warn' }, '置いたカードはあとから動かせません'),
-    h('div', { class: 'row' }, h('button', { class: 'btn ghost', onclick: closeSheet }, 'やめる'), h('button', { class: 'btn primary', onclick: go }, '裏向きで置く')),
-  ]);
-  setTimeout(() => hint.focus(), 50);
-}
-
-// ---------- 結果 ----------
-const VERDICT = ['バラバラ！ でも楽しかったよね', 'まあまあ通じ合ってる', 'おしい！ かなり通じ合ってる', 'パーフェクト！ 以心伝心！'];
-
-function renderResult() {
-  const st = S.st;
-  const r = st.result;
-  const theme = st.settings.theme;
-  const animate = S.animRound !== st.round;
-  S.animRound = st.round;
-  const step = r.slots.length > 12 ? 0.18 : 0.32;
-  const list = h('ol', { class: 'slots result' });
-  r.slots.forEach((s, i) => {
-    if (i > 0) {
-      const ok = r.pairs[i - 1];
-      list.append(h('li', { class: `sep ${ok ? 'ok' : 'ng'} ${animate ? 'anim' : ''}`, style: animate ? `animation-delay:${(i + 0.5) * step}s` : '' }, ok ? '' : h('span', null, '▲ 逆になってる')));
-    }
-    const isMine = s.owner === me().id;
-    list.append(
-      h(
-        'li',
-        { class: `slot filled revealed ${isMine ? 'mine' : ''}` },
-        h('span', { class: 'idx' }, i + 1),
-        h('div', { class: `flip ${animate ? 'anim' : ''}`, style: animate ? `animation-delay:${i * step}s;--c:${colorOf(s.owner)}` : `--c:${colorOf(s.owner)}` }, h('div', { class: 'face front' }, h('span', { class: 'num' }, s.n))),
-        h('div', { class: 'who' }, h('div', { class: 'hint' }, s.hint ? `「${s.hint}」` : h('span', { class: 'nohint' }, 'ヒントなし')), h('div', { class: 'owner' }, nameOf(s.owner), isMine ? '（あなた）' : ''))
       )
     );
-  });
-  const delay = animate ? r.slots.length * step + 0.3 : 0;
-  const sorted = r.slots.slice().sort((a, b) => a.n - b.n);
-  const head = h(
-    'section',
-    { class: `score ${animate ? 'anim' : ''} ${r.perfect ? 'perfect' : ''}`, style: `animation-delay:${delay}s` },
-    stars(r.stars),
-    h('div', { class: 'pts' }, h('b', null, r.score), '点'),
-    h('div', { class: 'verdict' }, VERDICT[r.stars]),
-    h('div', { class: 'detail' }, `となり同士の順番 ${r.goodPairs}/${Math.max(0, r.totalPairs)} ・ ぴったりの位置 ${r.exact}/${r.slots.length}`),
-    r.unplaced ? h('div', { class: 'detail warn' }, `置かれなかったカード ${r.unplaced}枚`) : null
-  );
-  app.append(
-    h(
-      'main',
-      { class: 'result' },
-      themeCard(theme),
-      head,
-      h('section', { class: 'board' }, h('div', { class: 'end top-end' }, h('b', null, '小'), theme ? theme.lo : ''), list, h('div', { class: 'end bottom-end' }, h('b', null, '大'), theme ? theme.hi : '')),
-      h('section', { class: 'card-sec answer' }, h('h2', null, '正しい順番'), h('div', { class: 'answer-row' }, sorted.map((s) => h('span', { class: 'ans', style: `--c:${colorOf(s.owner)}` }, h('b', null, s.n), nameOf(s.owner)))))
-    )
-  );
-  app.append(
-    h(
-      'div',
-      { class: 'dock' },
+  } else if (playing) {
+    const all = placedAll >= st.total;
+    if (isHost()) {
+      dock.append(
+        all
+          ? h('button', { class: 'btn primary big flipbtn', onclick: () => (S.room.startReveal(), S.room.flipNext()) }, 'めくる', h('small', null, '左から1枚ずつ'))
+          : h(
+              'div',
+              { class: 'waiting' },
+              myCards.length ? 'ぜんぶ置きました！ みんなを待っています' : 'みんなが置くのを待っています',
+              h('button', { class: 'linkbtn block', onclick: () => confirmSheet('まだ置いていない人がいます', '待たずにめくり始めますか？ 置かれていないカードはめくりません。', 'めくり始める', () => (S.room.startReveal(), S.room.flipNext())) }, '待たずにめくり始める')
+            )
+      );
+    } else dock.append(h('div', { class: 'waiting' }, myCards.length ? (all ? 'ホストがめくるのを待っています' : 'ぜんぶ置きました！ みんなを待っています') : '途中参加なので、次のラウンドから遊べます'));
+  } else if (!done) {
+    dock.append(
+      isHost()
+        ? h('button', { class: 'btn primary big flipbtn', onclick: () => S.room.flipNext() }, 'めくる', h('small', null, `${st.revealed + 1}枚目 / ${st.toReveal}枚`))
+        : h('div', { class: 'waiting' }, h('span', { class: 'spin small' }), `ホストがめくっています（${st.revealed}/${st.toReveal}）`)
+    );
+  } else {
+    dock.append(
       isHost()
         ? h(
             'div',
@@ -717,8 +638,107 @@ function renderResult() {
             )
           )
         : h('div', { class: 'waiting' }, h('span', { class: 'spin small' }), 'ホストが次を始めるのを待っています')
-    )
-  );
+    );
+  }
+  app.append(dock);
+}
+
+const pos = (x, y) => `left:calc(${x} * (100% - ${CW}px));top:calc(${y} * (100% - ${CH}px - 26px))`;
+
+/** 画面上の点 → カード置き場の位置（0〜1）。置き場の外なら null */
+function tablePoint(cx, cy) {
+  const t = document.getElementById('table');
+  if (!t) return null;
+  const r = t.getBoundingClientRect();
+  if (cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) return null;
+  const clamp = (v) => Math.min(1, Math.max(0, v));
+  return { x: clamp((cx - r.left - CW / 2) / (r.width - CW)), y: clamp((cy - r.top - 34) / (r.height - CH - 26)) };
+}
+
+/** 手札のカードをつかんで置き場へスワイプ */
+function dragSource(el, card) {
+  el.addEventListener('pointerdown', (e) => {
+    if (e.button > 0) return;
+    e.preventDefault();
+    const sx = e.clientX;
+    const sy = e.clientY;
+    let ghost = null;
+    const move = (ev) => {
+      if (!ghost) {
+        if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 8) return;
+        ghost = h('div', { class: 'dragghost', style: `--c:${colorOf(me().id)}` }, h('span', null, card.n));
+        document.body.append(ghost);
+        document.body.classList.add('dragging');
+      }
+      ghost.style.transform = `translate(${ev.clientX - 30}px, ${ev.clientY - 40}px) rotate(-4deg)`;
+      const t = document.getElementById('table');
+      if (t) t.classList.toggle('over', !!tablePoint(ev.clientX, ev.clientY));
+    };
+    const up = (ev) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      document.body.classList.remove('dragging');
+      const t = document.getElementById('table');
+      if (t) t.classList.remove('over');
+      if (!ghost) {
+        // タップ：選ぶだけ
+        S.sel = S.sel === card.cid ? null : card.cid;
+        render();
+        return;
+      }
+      ghost.remove();
+      const p = ev.type === 'pointerup' ? tablePoint(ev.clientX, ev.clientY) : null;
+      if (p) askPlace(card.cid, p.x, p.y);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  });
+}
+
+/** 置く前の確認（ヒントを書ける） */
+function askPlace(cid, x, y) {
+  const card = S.hand.cards.find((c) => c.cid === cid);
+  if (!card || card.placed) return;
+  S.drop = { cid, x, y };
+  S.sel = null;
+  render();
+  const theme = S.st.settings.theme;
+  const hint = h('input', { class: 'in', maxlength: HINT_MAX, placeholder: theme ? `「${theme.title}」なら？` : 'ひとこと', enterkeyhint: 'done' });
+  const cancel = () => {
+    S.drop = null;
+    closeSheet();
+    render();
+  };
+  const go = () => {
+    S.drop = null;
+    closeSheet();
+    if (S.st.phase !== 'play') return render();
+    const res = S.room.place(card.cid, x, y, hint.value);
+    if (res && res.pending) {
+      S.pending[card.cid] = { x, y };
+      setTimeout(() => {
+        if (S.pending[card.cid]) {
+          delete S.pending[card.cid];
+          S.key = '';
+          render();
+        }
+      }, 8000);
+    } else if (res && !res.ok) toast('置けませんでした', 'warn');
+    render();
+  };
+  hint.addEventListener('keydown', (e) => e.key === 'Enter' && go());
+  const pct = Math.round(1 + x * 99);
+  openSheet([
+    h('div', { class: 'place-head' }, h('div', { class: 'face back big', style: `--c:${colorOf(me().id)}` }, h('span', { class: 'num' }, card.n)), h('div', null, h('div', { class: 'sheet-title' }, 'ここに置く？'), h('div', { class: 'note' }, `だいたい ${pct} あたりの位置`))),
+    h('label', { class: 'lbl' }, 'ヒント（みんなに見えます・なくてもOK）'),
+    hint,
+    h('p', { class: 'note warn' }, '置いたカードはあとから動かせません'),
+    h('div', { class: 'row' }, h('button', { class: 'btn ghost', onclick: cancel }, 'やめる'), h('button', { class: 'btn primary', onclick: go }, '裏向きで置く')),
+  ]);
+  sheetRoot.querySelector('.sheet-bg').onclick = cancel;
+  setTimeout(() => hint.focus(), 50);
 }
 
 renderTitle();

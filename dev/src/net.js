@@ -1,10 +1,10 @@
 // 通信：公開の MQTT 中継サーバー経由で、部屋の全員と状態をやり取りする
 // ホストが部屋の状態を持ち、変更のたびに全員へ配る（retain で途中参加・再読み込みにも対応）。
 /* global mqtt */
-import { newRoom, addPlayer, removePlayer, deal, place, reveal, backToLobby, publicState, handOf, randomCode } from './game.js';
+import { newRoom, addPlayer, removePlayer, deal, place, startReveal, flipNext, backToLobby, publicState, handOf, randomCode } from './game.js';
 
 const DEFAULT_BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt'];
-const PREFIX = 'fusenarabe/v1/';
+const PREFIX = 'fusenarabe/v2/';
 
 export function brokers() {
   const q = new URLSearchParams(location.search).get('broker');
@@ -146,7 +146,7 @@ export class HostRoom extends Room {
       changed = true;
       if (!res.ok) this.client.publish(this.t.hand(a.id), JSON.stringify({ error: res.err }), { qos: 1 });
     } else if (a.type === 'place') {
-      const res = place(r, a.id, a.cid, a.slot, a.hint);
+      const res = place(r, a.id, a.cid, a.x, a.y, a.hint);
       if (res.ok) changed = true;
       else this.client.publish(this.t.hand(a.id), JSON.stringify({ error: res.err, cid: a.cid }), { qos: 1 });
     } else if (a.type === 'leave') {
@@ -191,11 +191,11 @@ export class HostRoom extends Room {
     this.lastHands = {};
     this.publish();
   }
-  revealNow() {
-    if (this.room.phase === 'play') {
-      reveal(this.room);
-      this.publish();
-    }
+  startReveal() {
+    if (startReveal(this.room)) this.publish();
+  }
+  flipNext() {
+    if (flipNext(this.room)) this.publish();
   }
   rematch() {
     backToLobby(this.room);
@@ -205,8 +205,8 @@ export class HostRoom extends Room {
     removePlayer(this.room, pid);
     this.publish();
   }
-  place(cid, slot, hint) {
-    const res = place(this.room, this.me.id, cid, slot, hint);
+  place(cid, x, y, hint) {
+    const res = place(this.room, this.me.id, cid, x, y, hint);
     this.publish();
     return res;
   }
@@ -272,8 +272,8 @@ export class GuestRoom extends Room {
   send(a) {
     this.client.publish(this.t.act, JSON.stringify({ ...a, id: this.me.id }), { qos: 1 });
   }
-  place(cid, slot, hint) {
-    this.send({ type: 'place', cid, slot, hint });
+  place(cid, x, y, hint) {
+    this.send({ type: 'place', cid, x, y, hint });
     return { ok: true, pending: true };
   }
   leave(silent = false) {

@@ -48,59 +48,80 @@ try {
   await shot(host, '02-lobby-host');
   await shot(g2, '03-lobby-guest');
   await host.click('text=ゲームを始める');
-  for (const p of [host, g1, g2]) await p.waitForSelector('.play');
-  // 全員の手札を読んで、正しい位置に置く（g2 の1枚だけわざと間違える）
+  for (const p of [host, g1, g2]) await p.waitForSelector('.hcard');
   const pages = { host, g1, g2 };
   const hands = {};
   for (const [k, p] of Object.entries(pages)) hands[k] = await p.$$eval('.hcard .n', (els) => els.map((e) => +e.textContent));
-  const all = Object.entries(hands).flatMap(([k, ns]) => ns.map((n) => ({ k, n }))).sort((a, b) => a.n - b.n);
-  console.log(all.map((x) => x.k + ':' + x.n).join(' '));
-  const order = all.slice();
-  // g2 の最後のカードと、その前のカードを入れ替える
-  const gi = order.map((x) => x.k).lastIndexOf('g2');
-  const swap = gi > 0 ? gi - 1 : 1;
-  [order[gi], order[swap]] = [order[swap], order[gi]];
-  let i = 0;
-  for (const slot of [0, 1, 2, 3, 4, 5]) {
-    const { k, n } = order[slot];
-    const p = pages[k];
-    await p.click(`.hcard:has(.n:text-is("${n}"))`);
-    await p.click(`.slots li:nth-child(${slot + 1})`);
-    await p.fill('.sheet-panel input', i++ % 2 ? '' : `ヒント${n}`);
-    if (slot === 3) await shot(p, '05-place-sheet');
-    await p.click('text=裏向きで置く');
-    await p.waitForFunction((s) => document.querySelectorAll('.slot.filled').length > s || document.querySelector('.result'), slot, { timeout: 10000 });
-    if (slot === 2) {
-      await g1.waitForFunction(() => document.querySelectorAll('.slot.filled').length === 3);
-      await shot(g1, '04-play');
-    }
+  console.log(JSON.stringify(hands));
+  async function drag(p, n, fx, fy) {
+    const [b, t] = await p.evaluate((n) => {
+      const r = (e) => { const q = e.getBoundingClientRect(); return { x: q.left, y: q.top, width: q.width, height: q.height }; };
+      const c = [...document.querySelectorAll('.hcard')].find((e) => +e.querySelector('.n').textContent === n);
+      return [r(c), r(document.getElementById('table'))];
+    }, n);
+    await p.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+    await p.mouse.down();
+    const tx = t.x + 25 + fx * (t.width - 50), ty = t.y + 40 + fy * (t.height - 130);
+    for (let s = 1; s <= 6; s++) await p.mouse.move(b.x + (tx - b.x) * s / 6, b.y + (ty - b.y) * s / 6);
+    return p;
   }
-  for (const p of [host, g1, g2]) await p.waitForSelector('main.result');
-  await host.waitForTimeout(3500);
-  await shot(host, '06-result-host');
-  await g1.screenshot({ path: `${SHOT}/07-result-full.png`, fullPage: true });
-  const score = await host.textContent('.pts b');
-  console.log('score', score, await host.textContent('.verdict'));
-  // もう一度
+  const items = Object.entries(hands).flatMap(([k, ns]) => ns.map((n) => ({ k, n })));
+  let i = 0;
+  for (const { k, n } of items) {
+    const p = pages[k];
+    // 数字に合わせた位置（g1 の2枚目だけ少しずらす）
+    const fx = (n - 1) / 99 + (k === 'g1' && i === 3 ? 0.25 : 0);
+    await drag(p, n, Math.min(1, fx), (i * 0.37) % 1);
+    if (i === 2) await shot(p, '04-dragging');
+    await p.mouse.up();
+    await p.waitForSelector('.sheet-panel input');
+    await p.fill('.sheet-panel input', ['カップ麺', '', 'ナイフ', '家族の写真', '', 'スマホ'][i]);
+    if (i === 2) await shot(p, '05-place-sheet');
+    await p.click('text=裏向きで置く');
+    i++;
+    await host.waitForFunction((c) => document.querySelectorAll('.tcard:not(.preview)').length >= c, i, { timeout: 10000 });
+  }
+  // タップでも置ける：（全部置いたので省略）
+  await g1.waitForFunction(() => document.querySelectorAll('.tcard').length === 6);
+  await shot(g1, '06-all-placed');
+  await host.waitForSelector('.flipbtn');
+  await shot(host, '07-host-flip');
+  for (let f = 1; f <= 6; f++) {
+    await host.click('.flipbtn');
+    await g2.waitForFunction((f) => document.querySelectorAll('.tcard.up').length === f, f);
+    if (f === 3) { await g2.waitForTimeout(700); await shot(g2, '08-flipping'); }
+  }
+  await host.waitForSelector('text=もう一度遊ぶ');
+  await g1.waitForTimeout(700);
+  await shot(g1, '09-done');
+  const order = await g1.$$eval('.tcard', (els) => els.map((e) => [+e.querySelector('.turn').textContent, +e.querySelector('.big-n').textContent]).sort((a, b) => a[0] - b[0]).map((x) => x[1]));
+  console.log('flip order', order.join(' '));
   await host.click('text=もう一度遊ぶ');
-  for (const p of [host, g1, g2]) await p.waitForSelector('.play');
+  for (const p of [host, g1, g2]) await p.waitForSelector('.hcard');
   const n2 = await g1.$$eval('.hcard', (e) => e.length);
   console.log('rematch ok, g1 cards', n2);
   // ゲスト再読み込み → 戻れる
   await g1.reload();
   await g1.waitForSelector('text=に戻る');
   await g1.click('.btn.resume');
-  await g1.waitForSelector('.play');
+  await g1.waitForSelector('.hcard');
   console.log('guest reload resume ok', await g1.$$eval('.hcard', (e) => e.length));
   // 打ち切り
-  await host.click('text=待たずに結果を見る');
+  while (await host.$('.hcard:not(.placed)')) {
+    const hn = await host.$eval('.hcard:not(.placed) .n', (e) => +e.textContent);
+    await drag(host, hn, hn / 100, 0.5); await host.mouse.up();
+    await host.click('text=裏向きで置く');
+    await host.waitForFunction((n) => ![...document.querySelectorAll('.hcard:not(.placed) .n')].some((e) => +e.textContent === n), hn);
+  }
+  await host.click('text=待たずにめくり始める');
   await host.click('.sheet-panel .btn.primary');
-  await g2.waitForSelector('main.result');
+  await g2.waitForFunction(() => document.querySelectorAll('.tcard.up').length === 1);
   console.log('early reveal ok');
   // ホスト再読み込み → 再開
   await host.reload();
   await host.click('text=を再開する');
-  await host.waitForSelector('main.result');
+  await host.waitForSelector('.flipbtn');
+  while (await host.$('.flipbtn')) await host.click('.flipbtn');
   await host.click('text=ロビーへ');
   await g2.waitForSelector('.lobby');
   console.log('host resume ok');
