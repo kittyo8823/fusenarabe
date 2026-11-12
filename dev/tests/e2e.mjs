@@ -84,8 +84,27 @@ try {
   // タップでも置ける：（全部置いたので省略）
   await g1.waitForFunction(() => document.querySelectorAll('.tcard').length === 6);
   await shot(g1, '06-all-placed');
-  await host.waitForSelector('.flipbtn');
-  await shot(host, '07-host-flip');
+  // g1 が置いたカードを動かして、ヒントを変える
+  const gcard = '.tcard.grab';
+  const box = await g1.evaluate((sel) => { const q = document.querySelector(sel).getBoundingClientRect(); return { x: q.left + 20, y: q.top + 30 }; }, gcard);
+  const tb = await g1.evaluate(() => { const q = document.getElementById('table').getBoundingClientRect(); return { x: q.left, y: q.top, w: q.width, h: q.height }; });
+  await g1.mouse.move(box.x, box.y); await g1.mouse.down();
+  for (let s = 1; s <= 6; s++) await g1.mouse.move(box.x + (tb.x + tb.w * 0.5 - box.x) * s / 6, box.y + (tb.y + tb.h * 0.15 - box.y) * s / 6);
+  await shot(g1, '06b-moving');
+  await g1.mouse.up();
+  await host.waitForFunction(() => [...document.querySelectorAll('.tcard')].some((e) => Math.abs(e.getBoundingClientRect().left + 25 - (document.getElementById('table').getBoundingClientRect().left + document.getElementById('table').getBoundingClientRect().width / 2)) < 30));
+  console.log('move ok');
+  await g1.click(gcard);
+  await g1.waitForSelector('text=ヒントを変える');
+  await g1.fill('.sheet-panel input', 'こっそり変更');
+  await g1.click('.sheet-panel .btn.primary');
+  await g2.waitForSelector('.thint:has-text("こっそり変更")');
+  console.log('hint edit ok');
+  await shot(host, '07-host-finish');
+  await host.click('.flipbtn');
+  await host.click('.sheet-panel .btn.primary');
+  await g2.waitForSelector('text=並びが確定');
+  await host.waitForSelector('.flipbtn:has-text("めくる")');
   for (let f = 1; f <= 6; f++) {
     await host.click('.flipbtn');
     await g2.waitForFunction((f) => document.querySelectorAll('.tcard.up').length === f, f);
@@ -113,8 +132,10 @@ try {
     await host.click('text=裏向きで置く');
     await host.waitForFunction((n) => ![...document.querySelectorAll('.hcard:not(.placed) .n')].some((e) => +e.textContent === n), hn);
   }
-  await host.click('text=待たずにめくり始める');
+  await host.click('text=置き終わった！');
+  await host.waitForSelector('text=まだ置いていない人がいます');
   await host.click('.sheet-panel .btn.primary');
+  await host.click('.flipbtn');
   await g2.waitForFunction(() => document.querySelectorAll('.tcard.up').length === 1);
   console.log('early reveal ok');
   // ホスト再読み込み → 再開

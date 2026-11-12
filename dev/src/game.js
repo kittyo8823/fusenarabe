@@ -83,7 +83,7 @@ export function deal(room, rnd = Math.random) {
 
 const clamp01 = (v) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.5);
 
-/** カード置き場の好きな位置（x: 0=左=1寄り, 1=右=100寄り）に裏向きで置く。置いたら動かせない */
+/** カード置き場の好きな位置（x: 0=左=1寄り, 1=右=100寄り）に裏向きで置く */
 export function place(room, pid, cid, x, y, hint = '') {
   if (room.phase !== 'play') return { ok: false, err: 'phase' };
   const hand = room.hands[pid];
@@ -92,6 +92,23 @@ export function place(room, pid, cid, x, y, hint = '') {
   if (card.placed) return { ok: false, err: 'placed' };
   card.placed = true;
   room.board.push({ owner: pid, cid, hint: cleanName(hint, HINT_MAX), x: clamp01(+x), y: clamp01(+y) });
+  return { ok: true };
+}
+
+/** 置いたカードを動かす・ヒントを書き直す（めくり始めるまでは何度でも） */
+export function update(room, pid, cid, patch = {}) {
+  if (room.phase !== 'play') return { ok: false, err: 'phase' };
+  const i = room.board.findIndex((b) => b.cid === cid);
+  if (i < 0 || room.board[i].owner !== pid) return { ok: false, err: 'card' };
+  const b = room.board[i];
+  if (patch.hint != null) b.hint = cleanName(patch.hint, HINT_MAX);
+  if (patch.x != null || patch.y != null) {
+    b.x = clamp01(+patch.x);
+    b.y = clamp01(+patch.y);
+    // 動かしたカードを一番上に
+    room.board.splice(i, 1);
+    room.board.push(b);
+  }
   return { ok: true };
 }
 

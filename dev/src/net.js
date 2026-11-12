@@ -1,7 +1,7 @@
 // 通信：公開の MQTT 中継サーバー経由で、部屋の全員と状態をやり取りする
 // ホストが部屋の状態を持ち、変更のたびに全員へ配る（retain で途中参加・再読み込みにも対応）。
 /* global mqtt */
-import { newRoom, addPlayer, removePlayer, deal, place, startReveal, flipNext, backToLobby, publicState, handOf, randomCode } from './game.js';
+import { newRoom, addPlayer, removePlayer, deal, place, update, startReveal, flipNext, backToLobby, publicState, handOf, randomCode } from './game.js';
 
 const DEFAULT_BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt'];
 const PREFIX = 'fusenarabe/v2/';
@@ -149,6 +149,9 @@ export class HostRoom extends Room {
       const res = place(r, a.id, a.cid, a.x, a.y, a.hint);
       if (res.ok) changed = true;
       else this.client.publish(this.t.hand(a.id), JSON.stringify({ error: res.err, cid: a.cid }), { qos: 1 });
+    } else if (a.type === 'update') {
+      const res = update(r, a.id, a.cid, { x: a.x, y: a.y, hint: a.hint });
+      if (res.ok) changed = true;
     } else if (a.type === 'leave') {
       if (r.phase === 'lobby') removePlayer(r, a.id);
       changed = true;
@@ -204,6 +207,11 @@ export class HostRoom extends Room {
   kick(pid) {
     removePlayer(this.room, pid);
     this.publish();
+  }
+  update(cid, patch) {
+    const res = update(this.room, this.me.id, cid, patch);
+    this.publish();
+    return res;
   }
   place(cid, x, y, hint) {
     const res = place(this.room, this.me.id, cid, x, y, hint);
@@ -271,6 +279,10 @@ export class GuestRoom extends Room {
 
   send(a) {
     this.client.publish(this.t.act, JSON.stringify({ ...a, id: this.me.id }), { qos: 1 });
+  }
+  update(cid, patch) {
+    this.send({ type: 'update', cid, ...patch });
+    return { ok: true, pending: true };
   }
   place(cid, x, y, hint) {
     this.send({ type: 'place', cid, x, y, hint });

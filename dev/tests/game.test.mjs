@@ -16,7 +16,15 @@ assert.ok(G.allPlaced(r));
 assert.equal(r.phase, 'play', 'no auto reveal');
 let ps = G.publicState(r);
 assert.ok(ps.board.every((b) => b.n == null), 'no numbers before reveal');
+const c0 = all[0];
+assert.equal(G.update(r, 'zz', c0.cid, { x: 0 }).err, 'card');
+assert.ok(G.update(r, owner(c0), c0.cid, { x: 0.99, y: 0.5 }).ok);
+assert.ok(G.update(r, owner(c0), c0.cid, { hint: 'かえた' }).ok);
+let b0 = r.board.find((b) => b.cid === c0.cid);
+assert.equal(b0.x, 0.99); assert.equal(b0.hint, 'かえた'); assert.equal(r.board.at(-1).cid, c0.cid);
+assert.ok(G.update(r, owner(c0), c0.cid, { x: 1, y: 0.3 }).ok); // 元の位置に戻す
 assert.ok(G.startReveal(r));
+assert.equal(G.update(r, owner(c0), c0.cid, { x: 0.5, y: 0.5 }).err, 'phase');
 ps = G.publicState(r);
 assert.equal(ps.board.find((b) => b.turn === 1).cid, all[5].cid, 'leftmost first');
 assert.ok(G.flipNext(r));
