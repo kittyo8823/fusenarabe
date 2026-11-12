@@ -85,7 +85,7 @@ try {
   await g1.waitForFunction(() => document.querySelectorAll('.tcard').length === 6);
   await shot(g1, '06-all-placed');
   // g1 が置いたカードを動かして、ヒントを変える
-  const gcard = '.tcard.grab';
+  const gcard = '.tcard.grab.mine';
   const box = await g1.evaluate((sel) => { const q = document.querySelector(sel).getBoundingClientRect(); return { x: q.left + 20, y: q.top + 30 }; }, gcard);
   const tb = await g1.evaluate(() => { const q = document.getElementById('table').getBoundingClientRect(); return { x: q.left, y: q.top, w: q.width, h: q.height }; });
   await g1.mouse.move(box.x, box.y); await g1.mouse.down();
@@ -100,6 +100,13 @@ try {
   await g1.click('.sheet-panel .btn.primary');
   await g2.waitForSelector('.thint:has-text("こっそり変更")');
   console.log('hint edit ok');
+  // g2 が他人（ホスト）のカードを動かす
+  const hb = await g2.evaluate(() => { const e = [...document.querySelectorAll('.tcard.grab:not(.mine)')].find((e) => e.querySelector('.towner')?.textContent === 'ホスト' || e.textContent.includes('ホスト')); e.id = 'pick'; const q = e.getBoundingClientRect(); const t = document.getElementById('table').getBoundingClientRect(); return { x: q.left + 20, y: q.top + 30, tx: t.left + t.width * 0.05 + 25, ty: t.top + t.height * 0.75 }; });
+  await g2.mouse.move(hb.x, hb.y); await g2.mouse.down();
+  for (let s = 1; s <= 6; s++) await g2.mouse.move(hb.x + (hb.tx - hb.x) * s / 6, hb.y + (hb.ty - hb.y) * s / 6);
+  await g2.mouse.up();
+  await host.waitForFunction((tx) => [...document.querySelectorAll('.tcard.mine')].some((e) => Math.abs(e.getBoundingClientRect().left + 25 - tx) < 30), hb.tx);
+  console.log('move others ok');
   await shot(host, '07-host-finish');
   await host.click('.flipbtn');
   await host.click('.sheet-panel .btn.primary');

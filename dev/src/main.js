@@ -198,7 +198,7 @@ function rulesBody() {
     h('li', null, '1〜100の数字カードが、ひとり1〜3枚ずつ配られます（全員ちがう数字）。'),
     h('li', null, 'お題が出ます。たとえば「無人島に持っていくもの」なら、1＝いらない、100＝絶対ほしい。'),
     h('li', null, '自分の数字に合う「ことば」をヒントにして、カードを裏向きのままカード置き場にスワイプして置きます。左ほど小さく（1）、右ほど大きい（100）。'),
-    h('li', null, '置く場所もタイミングも自由。置いたあとも、自分のカードはドラッグで動かせて、タップでヒントも変えられます。'),
+    h('li', null, '置く場所もタイミングも自由。置いたあとも、カードはだれのものでもドラッグで動かせます。自分のカードはタップでヒントも変えられます。'),
     h('li', null, '並びが決まったらホストが「置き終わった！」。そのあと「めくる」を押すたびに左から1枚ずつめくれます。うまく並んだかはみんなで判定！')
   );
 }
@@ -542,7 +542,7 @@ function renderTable() {
       if (!playing || (Math.abs(mv.x - b.x) < 1e-6 && Math.abs(mv.y - b.y) < 1e-6) || now - mv.at > 6000) delete S.moved[b.cid];
       else b = { ...b, x: mv.x, y: mv.y };
     }
-    const grab = playing && mine;
+    const grab = playing;
     const flipped = b.n != null;
     const fresh = flipped && !S.flipSeen.has(b.cid);
     if (flipped) S.flipSeen.add(b.cid);
@@ -621,7 +621,7 @@ function renderTable() {
       isHost() ? finishBtn(false) : null
     );
   } else if (playing) {
-    const tip = myCards.length ? h('div', { class: 'dock-head' }, '置いたカードはドラッグで移動、タップでヒント変更') : null;
+    const tip = myCards.length ? h('div', { class: 'dock-head' }, 'カードはだれのでもドラッグで動かせます。自分のカードはタップでヒント変更') : null;
     if (isHost()) dock.append(tip, finishBtn(true));
     else dock.append(tip, h('div', { class: 'waiting' }, myCards.length ? 'ホストが「置き終わった」を押すまで動かせます' : '途中参加なので、次のラウンドから遊べます'));
   } else if (!done) {
@@ -718,12 +718,13 @@ function tableDrag(el, b) {
     e.stopPropagation();
     const sx = e.clientX;
     const sy = e.clientY;
-    const n = (S.hand.cards.find((c) => c.cid === b.cid) || {}).n ?? '';
+    const n = (S.hand.cards.find((c) => c.cid === b.cid) || {}).n;
+    const mine = b.owner === me().id;
     let ghost = null;
     const move = (ev) => {
       if (!ghost) {
         if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 8) return;
-        ghost = h('div', { class: 'dragghost', style: `--c:${colorOf(me().id)}` }, h('span', null, n));
+        ghost = h('div', { class: `dragghost ${mine ? '' : 'back'}`, style: `--c:${colorOf(b.owner)}` }, h('span', null, mine ? n : ''));
         document.body.append(ghost);
         document.body.classList.add('dragging');
         S.lift = b.cid;
@@ -736,7 +737,7 @@ function tableDrag(el, b) {
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', up);
       document.body.classList.remove('dragging');
-      if (!ghost) return editHint(b.cid);
+      if (!ghost) return mine ? editHint(b.cid) : toast(`${nameOf(b.owner)}さんのカード。ドラッグで動かせます（ヒントは本人だけ変えられます）`);
       ghost.remove();
       S.lift = null;
       const p = ev.type === 'pointerup' ? tablePoint(ev.clientX, ev.clientY) : null;

@@ -95,12 +95,14 @@ export function place(room, pid, cid, x, y, hint = '') {
   return { ok: true };
 }
 
-/** 置いたカードを動かす・ヒントを書き直す（めくり始めるまでは何度でも） */
+/** 置いたカードを動かす（誰のカードでも）・ヒントを書き直す（本人だけ）。めくり始めるまでは何度でも */
 export function update(room, pid, cid, patch = {}) {
   if (room.phase !== 'play') return { ok: false, err: 'phase' };
   const i = room.board.findIndex((b) => b.cid === cid);
-  if (i < 0 || room.board[i].owner !== pid) return { ok: false, err: 'card' };
+  if (i < 0 || !room.players.some((p) => p.id === pid)) return { ok: false, err: 'card' };
   const b = room.board[i];
+  // 場所は誰でも動かせる。ヒントは本人だけ
+  if (patch.hint != null && b.owner !== pid) return { ok: false, err: 'owner' };
   if (patch.hint != null) b.hint = cleanName(patch.hint, HINT_MAX);
   if (patch.x != null || patch.y != null) {
     b.x = clamp01(+patch.x);
