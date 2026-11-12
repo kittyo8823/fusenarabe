@@ -114,12 +114,20 @@ function renderTitle(msg) {
   app.textContent = '';
   const params = new URLSearchParams(location.search);
   const nameIn = h('input', { class: 'in', maxlength: NAME_MAX, placeholder: 'ニックネーム', value: load('name') || '', autocomplete: 'nickname', enterkeyhint: 'done' });
-  const codeIn = h('input', { class: 'in code', maxlength: 6, placeholder: 'A7K92B', value: normalizeCode(params.get('room') || ''), autocapitalize: 'characters', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'go' });
-  codeIn.addEventListener('input', () => {
-    const p = codeIn.selectionStart;
-    codeIn.value = normalizeCode(codeIn.value);
-    codeIn.setSelectionRange(p, p);
+  const codeIn = h('input', { class: 'in code', type: 'text', inputmode: 'text', placeholder: '6文字のコード', value: normalizeCode(params.get('room') || ''), autocapitalize: 'characters', autocomplete: 'off', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'go', lang: 'en' });
+  // 日本語入力の変換中は触らない。確定してから英数字だけに整える
+  const tidy = () => {
+    const v = normalizeCode(codeIn.value);
+    if (v !== codeIn.value) codeIn.value = v;
+    codeIn.classList.toggle('filled', v.length > 0);
+  };
+  codeIn.addEventListener('input', (e) => {
+    if (e.isComposing) return;
+    tidy();
   });
+  codeIn.addEventListener('compositionend', tidy);
+  codeIn.addEventListener('blur', tidy);
+  codeIn.classList.toggle('filled', codeIn.value.length > 0);
   const err = h('div', { class: 'err' }, msg || '');
   const getName = () => {
     const n = cleanName(nameIn.value);

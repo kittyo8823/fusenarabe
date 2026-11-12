@@ -103,7 +103,9 @@ textarea.in { resize: none; font-size: 14px; }
 .or::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px solid var(--line); }
 .or span { background: var(--bg2); padding: 0 10px; position: relative; }
 .join-row { display: flex; gap: 8px; }
-.join-row .in.code { flex: 1; min-width: 0; letter-spacing: 0.18em; font-weight: 800; text-transform: uppercase; font-size: 20px; text-align: center; }
+.join-row .in.code { flex: 1; min-width: 0; font-size: 17px; text-align: center; }
+.join-row .in.code.filled { letter-spacing: 0.18em; font-weight: 800; font-size: 20px; }
+.join-row .in.code::placeholder { color: var(--mute); letter-spacing: 0; font-weight: 500; }
 .join-row .btn { flex: none; }
 .resume-box { border-top: 1px solid var(--line); padding-top: 6px; }
 .rules { margin-top: 18px; background: rgba(255, 255, 255, 0.04); border-radius: 16px; padding: 4px 16px; }

@@ -14,6 +14,7 @@ export function randomCode(rnd = Math.random) {
 
 export function normalizeCode(s) {
   return String(s || '')
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)) // 全角→半角
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, '')
     .slice(0, 6);
